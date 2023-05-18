@@ -82,6 +82,7 @@ func (s *Server) initSidecarInjector(args *PilotArgs) (*inject.Webhook, error) {
 		Revision: args.Revision,
 	}
 
+	// 创建 sidecar 自动注入 webhook
 	wh, err := inject.NewWebhook(parameters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create injection webhook: %v", err)

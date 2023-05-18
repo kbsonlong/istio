@@ -55,12 +55,15 @@ var _ mesh.Holder = &Environment{}
 // Environment provides an aggregate environmental API for Pilot
 type Environment struct {
 	// Discovery interface for listing services and instances.
+	// 服务发现的接口模型，主要列出 services 和 instances
 	ServiceDiscovery
 
 	// Config interface for listing routing rules
+	// Istio 配置文件的存储器，主要列出 ServiceEntry 等配置
 	IstioConfigStore
 
 	// Watcher is the watcher for the mesh config (to be merged into the config store)
+	// mesh config 文件的监听器
 	mesh.Watcher
 
 	// NetworksWatcher (loaded from a config map) provides information about the
@@ -68,6 +71,7 @@ type Environment struct {
 	// network. Each network provides information about the endpoints in a
 	// routable L3 network. A single routable L3 network can have one or more
 	// service registries.
+	// mesh network config 文件的监听器
 	NetworksWatcher mesh.NetworksWatcher
 
 	NetworkManager *NetworkManager
@@ -78,9 +82,11 @@ type Environment struct {
 	// ALL USE DURING A PUSH SHOULD USE THE ONE CREATED AT THE
 	// START OF THE PUSH, THE GLOBAL ONE MAY CHANGE AND REFLECT A DIFFERENT
 	// CONFIG AND PUSH
+	// 在推送（下发 xDS）生成期间保存信息的上下文
 	PushContext *PushContext
 
 	// DomainSuffix provides a default domain for the Istio server.
+	// istio server 默认的后缀域名
 	DomainSuffix string
 
 	ledger ledger.Ledger

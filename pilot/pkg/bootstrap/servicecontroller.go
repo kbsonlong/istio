@@ -34,6 +34,7 @@ func (s *Server) ServiceController() *aggregate.Controller {
 
 // initServiceControllers creates and initializes the service controllers
 func (s *Server) initServiceControllers(args *PilotArgs) error {
+
 	serviceControllers := s.ServiceController()
 
 	s.serviceEntryStore = serviceentry.NewServiceDiscovery(
@@ -44,6 +45,7 @@ func (s *Server) initServiceControllers(args *PilotArgs) error {
 
 	registered := make(map[provider.ID]bool)
 	for _, r := range args.RegistryOptions.Registries {
+		// 从之前初始化的 environment.ServiceDiscovery 中获取已注册的服务中心
 		serviceRegistry := provider.ID(r)
 		if _, exists := registered[serviceRegistry]; exists {
 			log.Warnf("%s registry specified multiple times.", r)
@@ -53,10 +55,12 @@ func (s *Server) initServiceControllers(args *PilotArgs) error {
 		log.Infof("Adding %s registry adapter", serviceRegistry)
 		switch serviceRegistry {
 		case provider.Kubernetes:
+			// 如果是 Kubernetes 则执行 initKubeRegistry
 			if err := s.initKubeRegistry(args); err != nil {
 				return err
 			}
 		case provider.Mock:
+			// Mock service registry
 			s.initMockRegistry()
 		default:
 			return fmt.Errorf("service registry %s is not supported", r)

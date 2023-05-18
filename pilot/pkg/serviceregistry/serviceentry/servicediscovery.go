@@ -74,14 +74,18 @@ type configKey struct {
 
 // ServiceEntryStore communicates with ServiceEntry CRDs and monitors for changes
 type ServiceEntryStore struct { // nolint:golint
+	// 用来接收 EnvoyXdsServer 的接口，主要用来 Push 相应的 xDS 更新请求
 	XdsUpdater model.XDSUpdater
-	store      model.IstioConfigStore
-	clusterID  cluster.ID
+	// 保存 ServiceEntry 实例的地方
+	store     model.IstioConfigStore
+	clusterID cluster.ID
 
 	// This lock is to make multi ops on the below stores.
 	// For example, in some case, it requires delete all instances and then update new ones.
 	// TODO: refactor serviceInstancesStore to remove the lock
-	mutex             sync.RWMutex
+	// 读写 store 时需要的锁
+	mutex sync.RWMutex
+	// 以 hostname/namespace 以及类型（是服务还是实例）等作为索引的服务实例表
 	serviceInstances  serviceInstancesStore
 	workloadInstances workloadInstancesStore
 	services          serviceStore
@@ -121,6 +125,8 @@ func WithNetworkIDCb(cb func(endpointIP string, labels labels.Instance) network.
 }
 
 // NewServiceDiscovery creates a new ServiceEntry discovery service
+// 初始化 ServiceEntryStore,将 EnvoyXdsServer 和 IstioConfigStore 与 ServiceEntryStore 关联起来外
+// 最重要的就是向 ConfigController 注册了 ServiceEntry 和 WorkloadEntry 的事件 Handler
 func NewServiceDiscovery(
 	configController model.ConfigStoreCache,
 	store model.IstioConfigStore,
@@ -178,6 +184,7 @@ func (s *ServiceEntryStore) workloadEntryHandler(old, curr config.Config, event 
 		event = model.EventDelete
 	}
 
+	// 根据标签选择Workload对应的 Instance，Enpoint
 	wi := s.convertWorkloadEntryToWorkloadInstance(curr, s.Cluster())
 	if wi != nil && !wi.DNSServiceEntryOnly {
 		// fire off the k8s handlers

@@ -75,13 +75,16 @@ type debounceOptions struct {
 // DiscoveryServer is Pilot's gRPC implementation for Envoy's xds APIs
 type DiscoveryServer struct {
 	// Env is the model environment.
+	// pilot server 中初始化的 Environment
 	Env *model.Environment
 
 	// MemRegistry is used for debug and load testing, allow adding services. Visible for testing.
+	// 用于调试和负载测试，允许添加服务
 	MemRegistry *memory.ServiceDiscovery
 
 	// ConfigGenerator is responsible for generating data plane configuration using Istio networking
 	// APIs and service registry info
+	// 控制面 Istio 配置的生成器，如 VirtualService 等
 	ConfigGenerator core.ConfigGenerator
 
 	// Generators allow customizing the generated config, based on the client metadata.
@@ -89,6 +92,7 @@ type DiscoveryServer struct {
 	// default generator, or the combination of Generator metadata and TypeUrl to select a
 	// different generator for a type.
 	// Normal istio clients use the default generator - will not be impacted by this.
+	// 针对不同配置类型的定制化生成器
 	Generators map[string]model.XdsResourceGenerator
 
 	// ProxyNeedsPush is a function that determines whether a push can be completely skipped. Individual generators
@@ -96,6 +100,7 @@ type DiscoveryServer struct {
 	ProxyNeedsPush func(proxy *model.Proxy, req *model.PushRequest) bool
 
 	// concurrentPushLimit is a semaphore that limits the amount of concurrent XDS pushes.
+	// 不同服务所有实例的集合，增量更新，key 为 service 和 namespace
 	concurrentPushLimit chan struct{}
 	// requestRateLimit limits the number of new XDS requests allowed. This helps prevent thundering hurd of incoming requests.
 	requestRateLimit *rate.Limiter
@@ -113,25 +118,30 @@ type DiscoveryServer struct {
 	mutex sync.RWMutex
 	// EndpointShards for a service. This is a global (per-server) list, built from
 	// incremental updates. This is keyed by service and namespace
+	// EndpointShards 中是以不同的注册中心名为 key 分组保存实例
 	EndpointShardsByService map[string]map[string]*EndpointShards
 
 	// pushChannel is the buffer used for debouncing.
 	// after debouncing the pushRequest will be sent to pushQueue
+	// 接收 push 请求的 channel
 	pushChannel chan *model.PushRequest
 
 	// mutex used for protecting Environment.PushContext
 	updateMutex sync.RWMutex
 
 	// pushQueue is the buffer that used after debounce and before the real xds push.
+	// 真正 Push xDS 之前所用的缓冲队列
 	pushQueue *PushQueue
 
 	// debugHandlers is the list of all the supported debug handlers.
 	debugHandlers map[string]string
 
 	// adsClients reflect active gRPC channels, for both ADS and EDS.
+	// ADS 和 EDS 的 gRPC 连接
 	adsClients      map[string]*Connection
 	adsClientsMutex sync.RWMutex
 
+	// 监听 xDS ACK 和连接断开
 	StatusReporter DistributionStatusCache
 
 	// Authenticators for XDS requests. Should be same/subset of the CA authenticators.
@@ -249,6 +259,7 @@ func (s *DiscoveryServer) closeJwksResolver() {
 // Register adds the ADS handler to the grpc server
 func (s *DiscoveryServer) Register(rpcs *grpc.Server) {
 	// Register v3 server
+	// 注册了全量推送和增量推送方法
 	discovery.RegisterAggregatedDiscoveryServiceServer(rpcs, s)
 }
 

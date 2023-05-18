@@ -190,6 +190,7 @@ type Server struct {
 
 // NewServer creates a new Server instance based on the provided arguments.
 func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
+	// 初始化 Environment
 	e := &model.Environment{
 		PushContext:  model.NewPushContext(),
 		DomainSuffix: args.RegistryOptions.KubeOptions.DomainSuffix,
@@ -201,6 +202,7 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 	})
 	e.ServiceDiscovery = ac
 
+	// 初始化 Server
 	s := &Server{
 		clusterID:               getClusterID(args),
 		environment:             e,
@@ -222,9 +224,11 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 	e.TrustBundle = s.workloadTrustBundle
 	s.XDSServer = xds.NewDiscoveryServer(e, args.Plugins, args.PodName, args.Namespace, args.RegistryOptions.KubeOptions.ClusterAliases)
 
+	// 监控
 	prometheus.EnableHandlingTimeHistogram()
 
 	// Apply the arguments to the configuration.
+	// 初始化 KubeClient
 	if err := s.initKubeClient(args); err != nil {
 		return nil, fmt.Errorf("error initializing kube client: %v", err)
 	}
@@ -232,10 +236,16 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 	// used for both initKubeRegistry and initClusterRegistries
 	args.RegistryOptions.KubeOptions.EndpointMode = kubecontroller.DetectEndpointMode(s.kubeClient)
 
+	// initMeshConfiguration 和 initMeshNetworks 通过 fileWatcher 对 istiod 从 configmap istio
+	// 中挂载的两个配置文件 mesh 和 meshNetworks 进行监听
+	// 初始化 MeshConfig
 	s.initMeshConfiguration(args, s.fileWatcher)
 	spiffe.SetTrustDomain(s.environment.Mesh().GetTrustDomain())
 
+	// 初始化 MeshNetworks
 	s.initMeshNetworks(args, s.fileWatcher)
+	// 初始化 MeshHandlers , 为 MeshConfig 和 MeshNetworks 两个配置文件注册了两个 Handler
+	// 当配置文件发生变化时触发全量 xDS 下发
 	s.initMeshHandlers()
 	s.environment.Init()
 	if err := s.environment.InitNetworksManager(s.XDSServer); err != nil {
@@ -259,6 +269,7 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 		return nil, err
 	}
 
+	// 初始化 Controllers，包括 证书、配置信息和服务注册信息控制器
 	if err := s.initControllers(args); err != nil {
 		return nil, err
 	}
@@ -290,10 +301,12 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 	// common https server for webhooks (e.g. injection, validation)
 	if s.kubeClient != nil {
 		s.initSecureWebhookServer(args)
+		// 初始化 sidecar 自动注入
 		wh, err = s.initSidecarInjector(args)
 		if err != nil {
 			return nil, fmt.Errorf("error initializing sidecar injector: %v", err)
 		}
+		// 配置校验
 		if err := s.initConfigValidation(args); err != nil {
 			return nil, fmt.Errorf("error initializing config validator: %v", err)
 		}
@@ -311,10 +324,14 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 		return nil, fmt.Errorf("error initializing debug server: %v", err)
 	}
 	// This should be called only after controllers are initialized.
+	// 初始化事件处理器
+	// serviceHandler 和 configHandler 分别响应服务和配置数据的更新事件
 	s.initRegistryEventHandlers()
 
+	// 初始化 DiscoveryService
 	s.initDiscoveryService(args)
 
+	// 初始化 SDSServer
 	s.initSDSServer()
 
 	// Notice that the order of authenticators matters, since at runtime
@@ -351,6 +368,8 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 	}
 
 	// This must be last, otherwise we will not know which informers to register
+	// 将 kubeClient.RunAndWait 方法注册至 startFuncs 中， RunAndWait 启动后所有 Informer 将开始缓存，并等待它们同步完成。
+	// 之所以在最后运行，可以保证所有的 Informer 都已经注册
 	if s.kubeClient != nil {
 		s.addStartFunc(func(stop <-chan struct{}) error {
 			s.kubeClient.RunAndWait(stop)
@@ -513,6 +532,7 @@ func (s *Server) WaitUntilCompletion() {
 }
 
 // initSDSServer starts the SDS server
+// SDS（Secret Discovery Service）, 用于在运行时为 Envoy 提供证书和密钥等敏感信息。
 func (s *Server) initSDSServer() {
 	if s.kubeClient == nil {
 		return
@@ -646,12 +666,14 @@ func (s *Server) initIstiodAdminServer(args *PilotArgs, whc func() map[string]st
 func (s *Server) initDiscoveryService(args *PilotArgs) {
 	log.Infof("starting discovery service")
 	// Implement EnvoyXdsServer grace shutdown
+	// 将 EnvoyXdsServer 的启动添加至 startFuncs 中，便于后续统一启动
 	s.addStartFunc(func(stop <-chan struct{}) error {
 		log.Infof("Starting ADS server")
 		s.XDSServer.Start(stop)
 		return nil
 	})
 
+	// 初始化 gRPC 服务器，并注册 xDS V3 的 ADS 服务到 gRPC 服务器上
 	s.initGrpcServer(args.KeepaliveOptions)
 
 	if args.ServerOptions.GRPCAddr != "" {
@@ -863,6 +885,7 @@ func (s *Server) cachesSynced() bool {
 func (s *Server) initRegistryEventHandlers() {
 	log.Info("initializing registry event handlers")
 	// Flush cached discovery responses whenever services configuration change.
+	// 当服务本身发生变更，会触发 xDS 全量下发，所有与该服务相关的代理都会收到推送
 	serviceHandler := func(svc *model.Service, _ model.Event) {
 		pushReq := &model.PushRequest{
 			Full: true,
@@ -877,6 +900,8 @@ func (s *Server) initRegistryEventHandlers() {
 	}
 	s.ServiceController().AppendServiceHandler(serviceHandler)
 
+	// 操作的对象主要是像 VirtualService 、 DestinationRules 这些 Istio 自定义的配置，
+	// 这些配置的变化也会触发 xDS 的全量下发，所有与该配置相关的代理都会收到推送
 	if s.configController != nil {
 		configHandler := func(prev config.Config, curr config.Config, event model.Event) {
 			defer func() {
@@ -887,6 +912,7 @@ func (s *Server) initRegistryEventHandlers() {
 				}
 			}()
 			// For update events, trigger push only if spec has changed.
+			// 只有更新 spec 字段会触发更新
 			if event == model.EventUpdate && !needsPush(prev, curr) {
 				log.Debugf("skipping push for %s as spec has not changed", prev.Key())
 				return
@@ -906,6 +932,7 @@ func (s *Server) initRegistryEventHandlers() {
 		if features.EnableGatewayAPI {
 			schemas = collections.PilotGatewayAPI.All()
 		}
+		// 跳过 ServiceEntry 、 WorkloadEntry 和 WorkloadGroup
 		for _, schema := range schemas {
 			// This resource type was handled in external/servicediscovery.go, no need to rehandle here.
 			if schema.Resource().GroupVersionKind() == collections.IstioNetworkingV1Alpha3Serviceentries.
@@ -1081,9 +1108,11 @@ func (s *Server) initControllers(args *PilotArgs) error {
 	if err := s.initCertController(args); err != nil {
 		return fmt.Errorf("error initializing certificate controller: %v", err)
 	}
+	// 初始化配置信息，大都是 Istio 定义的一系列 CRD（如 VirtualService 、 DestinationRules 等）
 	if err := s.initConfigController(args); err != nil {
 		return fmt.Errorf("error initializing config controller: %v", err)
 	}
+	// 初始化服务发现的 Controller
 	if err := s.initServiceControllers(args); err != nil {
 		return fmt.Errorf("error initializing service controllers: %v", err)
 	}

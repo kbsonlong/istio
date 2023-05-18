@@ -56,6 +56,7 @@ const (
 
 // initConfigController creates the config controller in the pilotConfig.
 func (s *Server) initConfigController(args *PilotArgs) error {
+	// 初始化 StatusReporter
 	s.initStatusController(args, features.EnableStatus)
 	meshConfig := s.environment.Mesh()
 	if len(meshConfig.ConfigSources) > 0 {
@@ -74,6 +75,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 		s.ConfigStores = append(s.ConfigStores, configController)
 	} else {
+		//  Istio 定义的一系列 CRD（如 VirtualService 、 DestinationRules 等）
 		err2 := s.initK8SConfigStore(args)
 		if err2 != nil {
 			return err2
@@ -129,16 +131,21 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 	}
 
 	// Wrap the config controller with a cache.
+	// 将所有 ConfigStore 聚合并缓存
 	aggregateConfigController, err := configaggregate.MakeCache(s.ConfigStores)
 	if err != nil {
 		return err
 	}
+	// 通过 s.configController 统一操作上面聚合的 ConfigStores
 	s.configController = aggregateConfigController
 
 	// Create the config store.
+	// 将其包装为 IstioConfigStore 传入 environment，便于操作 ServiceEntry/Gateway 等资源
+	// IstioConfigStore 会在之后的 ServiceEntryStore 中用到
 	s.environment.IstioConfigStore = model.MakeIstioStore(s.configController)
 
 	// Defer starting the controller until after the service is created.
+	// 将该 Controller 的启动函数注册到 startFuncs
 	s.addStartFunc(func(stop <-chan struct{}) error {
 		go s.configController.Run(stop)
 		return nil
@@ -151,6 +158,7 @@ func (s *Server) initK8SConfigStore(args *PilotArgs) error {
 	if s.kubeClient == nil {
 		return nil
 	}
+	// 初始化处理 Istio CRDs 的 Client ，实现 ConfigStoreCache 这个接口中增删改查等方法
 	configController, err := s.makeKubeConfigController(args)
 	if err != nil {
 		return err
