@@ -184,11 +184,13 @@ func injectRequired(ignored []string, config *Config, podSpec *corev1.PodSpec, m
 	// often results in routing failures within a node which can
 	// affect the network provider within the cluster causing
 	// additional pod failures.
+	// 使用 host network 网络的 pod 跳过注入
 	if podSpec.HostNetwork {
 		return false
 	}
 
 	// skip special kubernetes system namespaces
+	// kube-system 、 kube-public 和 kube-node-lease 名称空间跳过注入
 	for _, namespace := range ignored {
 		if metadata.Namespace == namespace {
 			return false
@@ -200,6 +202,7 @@ func injectRequired(ignored []string, config *Config, podSpec *corev1.PodSpec, m
 	var useDefault bool
 	var inject bool
 
+	// 获取 annotation 或者 labels 中 sidecar.istio.io/inject 的值，labels优先级更高
 	objectSelector := annos[annotation.SidecarInject.Name]
 	if lbl, labelPresent := metadata.GetLabels()[annotation.SidecarInject.Name]; labelPresent {
 		// The label is the new API; if both are present we prefer the label
@@ -214,6 +217,8 @@ func injectRequired(ignored []string, config *Config, podSpec *corev1.PodSpec, m
 	}
 
 	// If an annotation is not explicitly given, check the LabelSelectors, starting with NeverInject
+	// 判断 configmap `istio-sidecar-injector` NeverInject 匹配标签选择器
+	// 如果标签选择器匹配则不注入
 	if useDefault {
 		for _, neverSelector := range config.NeverInjectSelector {
 			selector, err := metav1.LabelSelectorAsSelector(&neverSelector)
@@ -231,6 +236,8 @@ func injectRequired(ignored []string, config *Config, podSpec *corev1.PodSpec, m
 
 	// If there's no annotation nor a NeverInjectSelector, check the AlwaysInject one
 	if useDefault {
+		//  判断 configmap `istio-sidecar-injector` AlwaysInject 匹配标签选择器
+		//
 		for _, alwaysSelector := range config.AlwaysInjectSelector {
 			selector, err := metav1.LabelSelectorAsSelector(&alwaysSelector)
 			if err != nil {
@@ -246,6 +253,7 @@ func injectRequired(ignored []string, config *Config, podSpec *corev1.PodSpec, m
 	}
 
 	var required bool
+	//   判断 configmap `istio-sidecar-injector`  默认策略policy
 	switch config.Policy {
 	default: // InjectionPolicyOff
 		log.Errorf("Illegal value for autoInject:%s, must be one of [%s,%s]. Auto injection disabled!",

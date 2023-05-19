@@ -163,6 +163,7 @@ func NewWebhook(p WebhookParameters) (*Webhook, error) {
 	}
 	wh.updateConfig(sidecarConfig, valuesConfig)
 
+	//初始化Webhook实例的时候注册/inject对应的处理器
 	p.Mux.HandleFunc("/inject", wh.serveInject)
 	p.Mux.HandleFunc("/inject/", wh.serveInject)
 
@@ -767,6 +768,7 @@ func (wh *Webhook) inject(ar *kube.AdmissionReview, path string) *kube.Admission
 	log.Debugf("OldObject: %v", string(req.OldObject.Raw))
 
 	wh.mu.RLock()
+	// Sicader注入判断逻辑
 	if !injectRequired(IgnoredNamespaces.UnsortedList(), wh.Config, &pod.Spec, pod.ObjectMeta) {
 		log.Infof("Skipping %s/%s due to policy check", pod.ObjectMeta.Namespace, podName)
 		totalSkippedInjections.Increment()
@@ -825,6 +827,7 @@ func (wh *Webhook) inject(ar *kube.AdmissionReview, path string) *kube.Admission
 func (wh *Webhook) serveInject(w http.ResponseWriter, r *http.Request) {
 	totalInjections.Increment()
 	var body []byte
+	// 获取请求体
 	if r.Body != nil {
 		if data, err := kube.HTTPConfigReader(r); err == nil {
 			body = data
@@ -855,6 +858,7 @@ func (wh *Webhook) serveInject(w http.ResponseWriter, r *http.Request) {
 	var reviewResponse *kube.AdmissionResponse
 	var obj runtime.Object
 	var ar *kube.AdmissionReview
+	// 解码请求体
 	if out, _, err := deserializer.Decode(body, nil, obj); err != nil {
 		handleError(fmt.Sprintf("Could not decode body: %v", err))
 		reviewResponse = toAdmissionResponse(err)
@@ -864,6 +868,7 @@ func (wh *Webhook) serveInject(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			handleError(fmt.Sprintf("Could not decode object: %v", err))
 		}
+		// 进入inject方法逻辑判断
 		reviewResponse = wh.inject(ar, path)
 	}
 
