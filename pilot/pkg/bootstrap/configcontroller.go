@@ -59,6 +59,8 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 	// 初始化 StatusReporter
 	s.initStatusController(args, features.EnableStatus)
 	meshConfig := s.environment.Mesh()
+	// mesh配置中有配置源，则使用MCP进行配置。 如果没有配置源，则检查是否提供了本地文件目录
+
 	if len(meshConfig.ConfigSources) > 0 {
 		// Using MCP for config.
 		if err := s.initConfigSources(args); err != nil {
@@ -66,6 +68,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 	} else if args.RegistryOptions.FileDir != "" {
 		// Local files - should be added even if other options are specified
+		//如果提供了本地文件目录，则创建一个新的memory.Controller，并使用makeFileMonitor函数监视文件目录中的更改
 		store := memory.Make(collections.Pilot)
 		configController := memory.NewController(store)
 
@@ -75,6 +78,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 		s.ConfigStores = append(s.ConfigStores, configController)
 	} else {
+		// 使用initK8SConfigStore函数初始化Kubernetes配置存储
 		//  Istio 定义的一系列 CRD（如 VirtualService 、 DestinationRules 等）
 		err2 := s.initK8SConfigStore(args)
 		if err2 != nil {
@@ -83,6 +87,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 	}
 
 	// If running in ingress mode (requires k8s), wrap the config controller.
+	// 如果在ingress模式下运行，则会将配置控制器包装在缓存中。
 	if hasKubeRegistry(args.RegistryOptions.Registries) && meshConfig.IngressControllerMode != meshconfig.MeshConfig_OFF {
 		// Wrap the config controller with a cache.
 		// Supporting only Ingress/v1 means we lose support of Kubernetes 1.18
@@ -90,6 +95,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		// Since supporting both in a monolith controller is painful due to lack of usable conversion logic between
 		// the two versions.
 		// As a compromise, we instead just fork the controller. Once 1.18 support is no longer needed, we can drop the old controller
+		// 如果支持的是Ingress/v1，则会将ingressv1.NewController添加到ConfigStores中。否则，将ingress.NewController添加到ConfigStores中
 		ingressV1 := ingress.V1Available(s.kubeClient)
 		if ingressV1 {
 			s.ConfigStores = append(s.ConfigStores,
@@ -100,9 +106,11 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 		}
 
 		s.addTerminatingStartFunc(func(stop <-chan struct{}) error {
+			// 使用NewLeaderElection函数创建一个新的LeaderElection，并将其添加到RunFunction中
 			leaderelection.
 				NewLeaderElection(args.Namespace, args.PodName, leaderelection.IngressController, args.Revision, s.kubeClient).
 				AddRunFunction(func(leaderStop <-chan struct{}) {
+					// 如果支持的是Ingress/v1，则会创建一个新的ingressv1.StatusSyncer
 					if ingressV1 {
 						ingressSyncer := ingressv1.NewStatusSyncer(s.environment.Watcher, s.kubeClient)
 						// Start informers again. This fixes the case where informers for namespace do not start,
@@ -114,6 +122,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 						log.Infof("Starting ingress controller")
 						ingressSyncer.Run(leaderStop)
 					} else {
+						// 创建一个新的ingress.StatusSyncer。然后，启动informers并运行ingressSyncer
 						ingressSyncer := ingress.NewStatusSyncer(s.environment.Watcher, s.kubeClient)
 						// Start informers again. This fixes the case where informers for namespace do not start,
 						// as we create them only after acquiring the leader lock
@@ -163,7 +172,9 @@ func (s *Server) initK8SConfigStore(args *PilotArgs) error {
 	if err != nil {
 		return err
 	}
+	// 创建的configController对象添加到s.ConfigStores中。
 	s.ConfigStores = append(s.ConfigStores, configController)
+	// 如果启用了GatewayAPI，则创建一个gateway.Controller对象，并将其添加到s.ConfigStores中
 	if features.EnableGatewayAPI {
 		if s.statusManager == nil && features.EnableGatewayAPIStatus {
 			s.initStatusManager(args)
@@ -212,15 +223,18 @@ func (s *Server) initK8SConfigStore(args *PilotArgs) error {
 			})
 		}
 	}
+	// 如果启用了Analysis，则调用s.initInprocessAnalysisController函数，初始化InprocessAnalysisController。
 	if features.EnableAnalysis {
 		if err := s.initInprocessAnalysisController(args); err != nil {
 			return err
 		}
 	}
+	// 调用configaggregate.MakeWriteableCache函数，创建一个configaggregate.WriteableCache对象，用于将多个ConfigStoreCache对象合并成一个可写的缓存
 	s.RWConfigStore, err = configaggregate.MakeWriteableCache(s.ConfigStores, configController)
 	if err != nil {
 		return err
 	}
+	// 创建一个workloadentry.Controller对象，并将其添加到s.XDSServer.WorkloadEntryController中，用于处理WorkloadEntry的配置
 	s.XDSServer.WorkloadEntryController = workloadentry.NewController(configController, args.PodName, args.KeepaliveOptions.MaxServerConnectionAge)
 	return nil
 }
@@ -228,6 +242,7 @@ func (s *Server) initK8SConfigStore(args *PilotArgs) error {
 // initConfigSources will process mesh config 'configSources' and initialize
 // associated configs.
 func (s *Server) initConfigSources(args *PilotArgs) (err error) {
+	// 该函数的作用是初始化配置源，根据配置源的类型，分别进行不同的处理
 	for _, configSource := range s.environment.Mesh().ConfigSources {
 		srcAddress, err := url.Parse(configSource.Address)
 		if err != nil {
@@ -236,6 +251,8 @@ func (s *Server) initConfigSources(args *PilotArgs) (err error) {
 		scheme := ConfigSourceAddressScheme(srcAddress.Scheme)
 		switch scheme {
 		case File:
+			// 会创建一个memory存储，然后调用makeFileMonitor函数，该函数会创建一个configmonitor.FileSnapshot对象，
+			// 用于监控文件的变化，并将读取到的配置存储到memory存储中
 			if srcAddress.Path == "" {
 				return fmt.Errorf("invalid fs config URL %s, contains no file path", configSource.Address)
 			}
@@ -248,6 +265,7 @@ func (s *Server) initConfigSources(args *PilotArgs) (err error) {
 			}
 			s.ConfigStores = append(s.ConfigStores, configController)
 		case XDS:
+			// 创建一个adsc.MCP对象，用于与XDS服务器通信，获取配置信息，并将获取到的配置存储到memory存储中
 			xdsMCP, err := adsc.New(srcAddress.Host, &adsc.Config{
 				Namespace: args.Namespace,
 				Workload:  args.PodName,
@@ -273,6 +291,7 @@ func (s *Server) initConfigSources(args *PilotArgs) (err error) {
 			s.ConfigStores = append(s.ConfigStores, configController)
 			log.Warn("Started XDS config ", s.ConfigStores)
 		case Kubernetes:
+			// 创建一个crdclient.ConfigStoreCache对象，用于从Kubernetes中获取配置信息，并将获取到的配置存储到memory存储中
 			if srcAddress.Path == "" || srcAddress.Path == "/" {
 				err2 := s.initK8SConfigStore(args)
 				if err2 != nil {

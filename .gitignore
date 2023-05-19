@@ -60,3 +60,4 @@ var/
 # MacOS Desktop Services Store
 .DS_Store
 eks-spot.yaml
+1.yaml

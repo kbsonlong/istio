@@ -46,6 +46,7 @@ const (
 // - the SHARED_MESH_CONFIG config map will also be loaded and merged.
 func (s *Server) initMeshConfiguration(args *PilotArgs, fileWatcher filewatcher.FileWatcher) {
 	log.Info("initializing mesh configuration ", args.MeshConfigFile)
+	// 首先检查是否存在指定的mesh配置文件，如果存在则使用该文件作为mesh配置。
 	defer func() {
 		if s.environment.Watcher != nil {
 			log.Infof("mesh configuration: %s", mesh.PrettyFormatOfMeshConfig(s.environment.Mesh()))
@@ -73,6 +74,7 @@ func (s *Server) initMeshConfiguration(args *PilotArgs, fileWatcher filewatcher.
 		}
 	}
 
+	// 如果不存在，则检查是否有Kubernetes客户端，如果没有则使用默认的mesh配置。
 	// Config file either didn't exist or failed to load.
 	if s.kubeClient == nil {
 		// Use a default mesh.
@@ -82,6 +84,8 @@ func (s *Server) initMeshConfiguration(args *PilotArgs, fileWatcher filewatcher.
 		return
 	}
 
+	// 如果有，则从Istio ConfigMap中获取mesh配置，并使用一个watcher来监视该配置的更改。
+	// 如果启用了实验性功能“SHAREDMESHCONFIG”，则还会加载其他mesh配置文件并将其合并。
 	// Watch the istio ConfigMap for mesh config changes.
 	// This may be necessary for external Istiod.
 	configMapName := getMeshConfigMapName(args.Revision)
@@ -91,6 +95,7 @@ func (s *Server) initMeshConfiguration(args *PilotArgs, fileWatcher filewatcher.
 	s.environment.NetworksWatcher = multiWatcher
 	log.Infof("initializing mesh networks from mesh config watcher")
 
+	// 最后，它会将mesh配置和网络配置watcher存储在Server结构体中的environment字段中。
 	if multiWatch {
 		kubemesh.AddUserMeshConfig(s.kubeClient, s.environment.Watcher, args.Namespace, configMapKey, features.SharedMeshConfig, s.internalStop)
 	}
@@ -99,10 +104,12 @@ func (s *Server) initMeshConfiguration(args *PilotArgs, fileWatcher filewatcher.
 // initMeshNetworks loads the mesh networks configuration from the file provided
 // in the args and add a watcher for changes in this file.
 func (s *Server) initMeshNetworks(args *PilotArgs, fileWatcher filewatcher.FileWatcher) {
+	// 初始化mesh网络。它首先检查是否已经存在一个网络watcher，如果存在则直接返回。
 	if s.environment.NetworksWatcher != nil {
 		return
 	}
 	log.Info("initializing mesh networks")
+	// 如果没有，则会尝试从args中提供的网络配置文件中创建一个新的watcher。如果创建失败，则会记录错误日志。
 	if args.NetworksConfigFile != "" {
 		var err error
 		s.environment.NetworksWatcher, err = mesh.NewNetworksWatcher(fileWatcher, args.NetworksConfigFile)
@@ -111,6 +118,7 @@ func (s *Server) initMeshNetworks(args *PilotArgs, fileWatcher filewatcher.FileW
 		}
 	}
 
+	// 如果没有提供网络配置文件，则会创建一个新的FixedNetworksWatcher
 	if s.environment.NetworksWatcher == nil {
 		log.Info("mesh networks configuration not provided")
 		s.environment.NetworksWatcher = mesh.NewFixedNetworksWatcher(nil)

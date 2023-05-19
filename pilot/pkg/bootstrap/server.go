@@ -1207,6 +1207,12 @@ func (s *Server) startCA(caOpts *caOptions) {
 func (s *Server) initMeshHandlers() {
 	log.Info("initializing mesh handlers")
 	// When the mesh config or networks change, do a full push.
+	// 初始化mesh处理程序。它会向日志中记录初始化信息，然后添加一个mesh处理程序。
+	// 当mesh配置或网络发生更改时，会进行全量推送。在mesh处理程序中，它会设置spiffe的信任域，
+	// 然后调用 XDSServer的ConfigGenerator.MeshConfigChanged 方法和 ConfigUpdate 方法，以便更新配置。
+	// ConfigUpdate 方法会将一个 PushRequest 结构体作为参数，
+	// 其中Full字段设置为true，表示进行全量更新，
+	// Reason 字段设置为 model.GlobalUpdate，表示更新原因是全局更新。
 	s.environment.AddMeshHandler(func() {
 		spiffe.SetTrustDomain(s.environment.Mesh().GetTrustDomain())
 		s.XDSServer.ConfigGenerator.MeshConfigChanged(s.environment.Mesh())
