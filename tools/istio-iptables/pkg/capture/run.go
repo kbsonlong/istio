@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -211,8 +211,10 @@ func (cfg *IptablesConfigurator) handleOutboundIncludeRules(
 	appendRule func(command iptableslog.Command, chain string, table string, params ...string) *builder.IptablesBuilder,
 	insert func(command iptableslog.Command, chain string, table string, position int, params ...string) *builder.IptablesBuilder) {
 	// Apply outbound IP inclusions.
+	// 默认所有流量都被重定向到`Envoy`,当存在合法`CIDR` 时,其他流量都不被重定向`ISTIO_REDIRECT`,都被`RETURN`回去
 	if rangeInclude.IsWildcard {
 		// Wildcard specified. Redirect all remaining outbound traffic to Envoy.
+		// -A ISTIO_OUTPUT -j ISTIO_REDIRECT
 		appendRule(iptableslog.UndefinedCommand, constants.ISTIOOUTPUT, constants.NAT, "-j", constants.ISTIOREDIRECT)
 		for _, internalInterface := range split(cfg.cfg.KubeVirtInterfaces) {
 			insert(iptableslog.KubevirtCommand,
@@ -229,6 +231,7 @@ func (cfg *IptablesConfigurator) handleOutboundIncludeRules(
 				constants.ISTIOOUTPUT, constants.NAT, "-d", cidr.String(), "-j", constants.ISTIOREDIRECT)
 		}
 		// All other traffic is not redirected.
+		// -A ISTIO_OUTPUT -j RETURN
 		appendRule(iptableslog.UndefinedCommand, constants.ISTIOOUTPUT, constants.NAT, "-j", constants.RETURN)
 	}
 }
@@ -370,6 +373,8 @@ func (cfg *IptablesConfigurator) Run() {
 	// Create a new chain for redirecting outbound traffic to the common Envoy port.
 	// In both chains, '-j RETURN' bypasses Envoy and '-j ISTIOREDIRECT'
 	// redirects to Envoy.
+	// 默认所有流量都被重定向到 `Envoy Port`,默认`15001`
+	// -A ISTIO_REDIRECT -p tcp -j REDIRECT --to-ports 15001
 	cfg.iptables.AppendRule(iptableslog.UndefinedCommand,
 		constants.ISTIOREDIRECT, constants.NAT, "-p", constants.TCP, "-j", constants.REDIRECT, "--to-ports", cfg.cfg.ProxyPort)
 
