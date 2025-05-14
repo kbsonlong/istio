@@ -72,6 +72,8 @@ import (
 	gatewayapifake "sigs.k8s.io/gateway-api/pkg/client/clientset/gateway/versioned/fake"
 	gatewayapiinformer "sigs.k8s.io/gateway-api/pkg/client/informers/gateway/externalversions"
 
+	"flag"
+
 	"istio.io/api/label"
 	clientextensions "istio.io/client-go/pkg/apis/extensions/v1alpha1"
 	clientnetworkingalpha "istio.io/client-go/pkg/apis/networking/v1alpha3"
@@ -91,6 +93,17 @@ const (
 	defaultLocalAddress = "localhost"
 	fieldManager        = "istio-kube-client"
 )
+
+var (
+	// DefaultLabelSelector is the default label selector for Istio pods
+	DefaultLabelSelector = "app=istiod"
+	// LabelSelector can be overridden via command line flag
+	LabelSelector string
+)
+
+func init() {
+	flag.StringVar(&LabelSelector, "l", DefaultLabelSelector, "Label selector for Istio pods")
+}
 
 // Client is a helper for common Kubernetes client operations. This contains various different kubernetes
 // clients using a shared config. It is expected that all of Istiod can share the same set of clients and
@@ -664,8 +677,13 @@ func (c *client) PodLogs(ctx context.Context, podName, podNamespace, container s
 }
 
 func (c *client) AllDiscoveryDo(ctx context.Context, istiodNamespace, path string) (map[string][]byte, error) {
+	labelSelector := LabelSelector
+	if labelSelector == "" {
+		labelSelector = DefaultLabelSelector
+	}
+
 	istiods, err := c.GetIstioPods(ctx, istiodNamespace, map[string]string{
-		"labelSelector": "app=istiod",
+		"labelSelector": labelSelector,
 		"fieldSelector": "status.phase=Running",
 	})
 	if err != nil {
@@ -728,11 +746,21 @@ func (c *client) portForwardRequest(ctx context.Context, podName, podNamespace, 
 
 func (c *client) GetIstioPods(ctx context.Context, namespace string, params map[string]string) ([]v1.Pod, error) {
 	if c.revision != "" {
-		labelSelector, ok := params["labelSelector"]
-		if ok {
-			params["labelSelector"] = fmt.Sprintf("%s,%s=%s", labelSelector, label.IoIstioRev.Name, c.revision)
-		} else {
-			params["labelSelector"] = fmt.Sprintf("%s=%s", label.IoIstioRev.Name, c.revision)
+		labelSelector := LabelSelector
+		if labelSelector == "" {
+			labelSelector = DefaultLabelSelector
+		}
+		if ls, ok := params["labelSelector"]; ok {
+			labelSelector = ls
+		}
+		params["labelSelector"] = fmt.Sprintf("%s,%s=%s", labelSelector, label.IoIstioRev.Name, c.revision)
+	} else {
+		if _, ok := params["labelSelector"]; !ok {
+			if LabelSelector != "" {
+				params["labelSelector"] = LabelSelector
+			} else {
+				params["labelSelector"] = DefaultLabelSelector
+			}
 		}
 	}
 
@@ -768,7 +796,7 @@ func (c *client) extractExecResult(podName, podNamespace, container, cmd string)
 
 func (c *client) GetIstioVersions(ctx context.Context, namespace string) (*version.MeshInfo, error) {
 	pods, err := c.GetIstioPods(ctx, namespace, map[string]string{
-		"labelSelector": "app=istiod",
+		"labelSelector": "app=istiod-sg-prod-01",
 		"fieldSelector": "status.phase=Running",
 	})
 	if err != nil {
